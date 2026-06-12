@@ -2,7 +2,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from scraper import aggregate_player_stats, get_all_boxscores, get_boxscore, get_schedule
+from scraper import (
+    KNOWN_OPPONENTS,
+    aggregate_player_stats,
+    get_opponent_season_data,
+    get_schedule,
+)
+from simulation import simulate_matchup
+from scouting import generate_full_scouting_report
 
 st.set_page_config(
     page_title="Highland Lady Bulldogs",
@@ -21,175 +28,247 @@ def load_schedule() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_boxscore(event_id: int) -> dict:
-    return get_boxscore(event_id)
+def load_opponent_data(team_id: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    return get_opponent_season_data(team_id)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_all_season_stats() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    schedule = load_schedule()
-    off_df, def_df = get_all_boxscores(schedule)
-    player_df = aggregate_player_stats(off_df, def_df)
-    return off_df, def_df, player_df
+# ── Team selectors ─────────────────────────────────────────────────────────────
 
+col_my, col_opp = st.columns(2)
+with col_my:
+    st.selectbox("My Team", ["Highland"], key="my_team")
+with col_opp:
+    opponent_name = st.selectbox("Opposing Team", list(KNOWN_OPPONENTS.keys()))
 
-# ── Load schedule (fast — 1 request) ──────────────────────────────────────────
+team_id = KNOWN_OPPONENTS[opponent_name]
 
-with st.spinner("Loading schedule..."):
-    schedule = load_schedule()
+# ── Load data ──────────────────────────────────────────────────────────────────
 
-games = schedule[schedule["result"].isin(["W", "L"])].copy()
-games["game_num"] = range(1, len(games) + 1)
-games["label"] = games["date"] + " " + games["result"] + " vs " + games["opponent"]
-games["hover"] = games["date"] + " · " + games["result"] + " · " + games["hld_score"].astype(str) + "-" + games["opp_score"].astype(str)
+with st.spinner("Loading Highland schedule..."):
+    hld_schedule = load_schedule()
 
-tab_overview, tab_schedule, tab_players, tab_game = st.tabs(
-    ["📊 Overview", "📅 Schedule", "👤 Player Stats", "🎮 Game Explorer"]
+hld_played = hld_schedule[hld_schedule["result"].isin(["W", "L"])]
+
+with st.spinner(
+    f"Loading {opponent_name} season data — first load takes ~15 seconds, then cached for 1 hour..."
+):
+    opp_schedule, opp_off_df, opp_def_df = load_opponent_data(team_id)
+
+opp_played = opp_schedule[opp_schedule["result"].isin(["W", "L"])]
+
+# ── Monte Carlo simulation ─────────────────────────────────────────────────────
+
+matchup = simulate_matchup(
+    hld_schedule=hld_played,
+    opp_schedule=opp_played,
+    opp_off_df=opp_off_df,
+    opp_def_df=opp_def_df,
+    opponent_name=opponent_name,
 )
+sim = matchup["simulation"]
 
+# ── Disclaimer ─────────────────────────────────────────────────────────────────
 
-# ── TAB 1: OVERVIEW ───────────────────────────────────────────────────────────
-
-with tab_overview:
-    wins = (games["result"] == "W").sum()
-    losses = (games["result"] == "L").sum()
-    ppg = games["hld_score"].mean()
-    opp_ppg = games["opp_score"].mean()
-    avg_margin = games["margin"].mean()
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Record", f"{wins}–{losses}")
-    c2.metric("Win %", f"{wins / (wins + losses):.0%}")
-    c3.metric("Pts Per Game", f"{ppg:.1f}")
-    c4.metric("Opp PPG", f"{opp_ppg:.1f}")
-    c5.metric("Avg Margin", f"{avg_margin:+.1f}")
-
-    st.divider()
-
-    # Scoring bar chart — green for wins, red for losses, opponent as line
-    colors = ["#2ecc71" if r == "W" else "#e74c3c" for r in games["result"]]
-    fig = go.Figure()
-    fig.add_bar(
-        x=games["opponent"],
-        y=games["hld_score"],
-        name="Highland",
-        marker_color=colors,
-        customdata=games["hover"],
-        hovertemplate="%{customdata}<br>Highland: %{y}<extra></extra>",
+if matchup["disclaimer"]:
+    st.warning(matchup["disclaimer"])
+else:
+    st.info(
+        f"📊 **{opponent_name} has a complete dataset.** "
+        f"Both teams track the same stats — scoring, shooting percentages, and turnovers."
     )
-    fig.add_scatter(
-        x=games["opponent"],
-        y=games["opp_score"],
-        mode="lines+markers",
-        name="Opponent",
-        line=dict(color="rgba(150,150,150,0.8)", dash="dot", width=2),
-        marker=dict(size=5),
-        customdata=games["hover"],
-        hovertemplate="%{customdata}<br>Opponent: %{y}<extra></extra>",
+
+# ── Simulation results ─────────────────────────────────────────────────────────
+
+st.subheader(f"Highland vs. {opponent_name} — Win Probability")
+
+col_donut, col_stats = st.columns([1, 1])
+
+with col_donut:
+    win_pct = sim["win_prob"]
+    loss_pct = sim["loss_prob"]
+
+    fig = go.Figure(
+        go.Pie(
+            values=[win_pct * 100, loss_pct * 100],
+            labels=["Highland", opponent_name],
+            hole=0.65,
+            marker=dict(colors=["#2ecc71", "#e74c3c"]),
+            textinfo="none",
+            hovertemplate="%{label}: %{value:.1f}%<extra></extra>",
+        )
+    )
+    fig.add_annotation(
+        text=f"<b>{win_pct:.0%}</b>",
+        x=0.5, y=0.58,
+        font=dict(size=38, color="#2ecc71" if win_pct >= 0.5 else "#e74c3c"),
+        showarrow=False,
+    )
+    fig.add_annotation(
+        text="Highland win probability",
+        x=0.5, y=0.42,
+        font=dict(size=13, color="#888888"),
+        showarrow=False,
     )
     fig.update_layout(
-        title="Points Scored by Game",
-        xaxis_tickangle=-50,
-        height=420,
-        legend=dict(orientation="h", y=1.1),
-        margin=dict(b=140),
-        hovermode="x unified",
+        showlegend=True,
+        legend=dict(orientation="h", y=-0.08),
+        height=320,
+        margin=dict(t=10, b=20, l=10, r=10),
     )
     st.plotly_chart(fig, use_container_width=True)
 
+with col_stats:
+    st.markdown("#### Projected Score")
+    c1, c2 = st.columns(2)
+    c1.metric("Highland", sim["hld_projected"],
+              delta=f"avg {sim['hld_mean']} ± {sim['hld_std']} pts")
+    c2.metric(opponent_name, sim["opp_projected"],
+              delta=f"avg {sim['opp_mean']} ± {sim['opp_std']} pts",
+              delta_color="off")
 
-# ── TAB 2: SCHEDULE ───────────────────────────────────────────────────────────
+    st.markdown("---")
 
-with tab_schedule:
-    display = schedule.copy()
-    display["Score"] = display.apply(
-        lambda r: f"{int(r['hld_score'])}-{int(r['opp_score'])}"
-        if pd.notna(r["hld_score"]) else "—",
-        axis=1,
-    )
-    display = display.rename(columns={
-        "date": "Date",
-        "opponent": "Opponent",
-        "result": "W/L",
-        "record": "Record",
-    })
+    # Head-to-head — show every game Highland played this opponent
+    st.markdown("#### Head-to-Head This Season")
+    h2h = hld_schedule[
+        hld_schedule["opponent"].str.contains(opponent_name, case=False, na=False)
+    ]
+    if not h2h.empty:
+        for _, g in h2h.iterrows():
+            if pd.notna(g.get("hld_score")):
+                if g["result"] == "W":
+                    badge = f"✅ W  {int(g['hld_score'])}–{int(g['opp_score'])}"
+                elif g["result"] == "L":
+                    badge = f"❌ L  {int(g['hld_score'])}–{int(g['opp_score'])}"
+                else:
+                    badge = "—"
+                st.markdown(f"**{g['date']}** — {badge}")
+    else:
+        st.caption("No head-to-head game found in Highland's schedule.")
 
-    def _color_result(val: str) -> str:
-        if val == "W":
-            return "background-color: #d4edda; color: #155724; font-weight: bold"
-        if val == "L":
-            return "background-color: #f8d7da; color: #721c24; font-weight: bold"
-        return ""
-
-    styled = (
-        display[["Date", "Opponent", "W/L", "Score", "Record"]]
-        .style.map(_color_result, subset=["W/L"])
-    )
-    st.dataframe(styled, use_container_width=True, height=950)
-
-
-# ── TAB 3: PLAYER STATS ───────────────────────────────────────────────────────
-
-with tab_players:
+    st.markdown("---")
     st.caption(
-        "Aggregates all 33 game box scores — takes ~20 seconds on first load, "
-        "then cached for 1 hour."
+        f"Based on {sim['n_sims']:,} simulations · "
+        f"Highland: {sim['hld_n']} games · "
+        f"{opponent_name}: {sim['opp_n']} games"
     )
 
-    if st.button("Load Season Player Stats", type="primary"):
-        with st.spinner("Fetching all box scores... sit tight (runs once per hour)"):
-            _, _, player_df = load_all_season_stats()
+st.divider()
 
-        if player_df.empty:
-            st.warning("Could not load stats — check network connection.")
+# ── Scouting report ────────────────────────────────────────────────────────────
+
+st.subheader(f"📋 Scouting Report — {opponent_name}")
+
+report = generate_full_scouting_report(opp_schedule, opp_off_df, opp_def_df, opponent_name)
+trend = report["trend"]
+
+# Season overview strip
+if trend.get("n_games", 0) >= 4:
+    with st.container(border=True):
+        st.caption(f"{opponent_name} — Season Overview ({trend['n_games']} games played)")
+        oc1, oc2, oc3, oc4, oc5 = st.columns(5)
+        oc1.metric("Record", trend.get("season_record", "—"))
+        oc2.metric("PPG", trend.get("season_ppg", "—"))
+        oc3.metric("Opp PPG", trend.get("season_opp_ppg", "—"))
+        oc4.metric("Last 5", trend.get("last5_record", "—"))
+        arrow = "↑" if trend.get("trending_up") else "↓"
+        early_wr = trend.get("early_win_rate", 0)
+        recent_wr = trend.get("recent_win_rate", 0)
+        delta_pct = f"{arrow} {abs(recent_wr - early_wr):.0%} vs first half"
+        oc5.metric("Form", f"{recent_wr:.0%} WR (2nd half)", delta=delta_pct)
+else:
+    st.info(f"Not enough completed games to generate a season overview for {opponent_name}.")
+
+st.markdown("&nbsp;", unsafe_allow_html=True)
+
+# ── Key Performance Patterns ───────────────────────────────────────────────────
+
+insights = report["insights"]
+if insights:
+    st.markdown("##### Key Performance Patterns")
+    for row_start in range(0, len(insights), 2):
+        row = insights[row_start: row_start + 2]
+        cols = st.columns(len(row))
+        for col, ins in zip(cols, row):
+            with col:
+                with st.container(border=True):
+                    st.markdown(f"## {ins['icon']}")
+                    st.markdown(f"**{ins['category']}**")
+                    st.markdown(f"*{ins['headline']}*")
+                    st.markdown("&nbsp;", unsafe_allow_html=True)
+                    ic1, ic2 = st.columns(2)
+                    ic1.metric(
+                        f"✅ {ins['good_label']}",
+                        ins["good_record"],
+                        delta=f"{max(ins['wr_above'], ins['wr_below']):.0%} WR",
+                    )
+                    ic2.metric(
+                        f"❌ {ins['bad_label']}",
+                        ins["bad_record"],
+                        delta=f"−{abs(ins['wr_above'] - ins['wr_below']):.0%}",
+                        delta_color="inverse",
+                    )
+    st.markdown("&nbsp;", unsafe_allow_html=True)
+else:
+    st.info("Not enough game data to surface meaningful win/loss patterns.")
+
+# ── Roster Breakdown ───────────────────────────────────────────────────────────
+
+player_stats = aggregate_player_stats(opp_off_df, opp_def_df)
+if not player_stats.empty:
+    st.markdown("##### Roster Breakdown")
+    priority_cols = ["GP", "PPG", "Pts", "FG%", "3FG%", "FT%", "RPG", "RBS", "APG", "AST", "STL", "SPG"]
+    show_cols = [c for c in priority_cols if c in player_stats.columns]
+
+    display_df = player_stats[show_cols].head(10).reset_index()
+    display_df = display_df.rename(columns={display_df.columns[0]: "Player"})
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.markdown("&nbsp;", unsafe_allow_html=True)
+
+# ── Player Impact Analysis ─────────────────────────────────────────────────────
+
+player_impacts = report["player_impacts"]
+if player_impacts:
+    st.markdown("##### Player Impact Analysis")
+    st.caption("Win/loss record based on each player's scoring threshold")
+    p_cols = st.columns(min(len(player_impacts), 3))
+    for col, p in zip(p_cols, player_impacts):
+        with col:
+            with st.container(border=True):
+                st.markdown(f"## 👤")
+                st.markdown(f"**{p['name']}**")
+                st.markdown(f"Season avg: **{p['season_avg']} pts/g**")
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+                pc1, pc2 = st.columns(2)
+                pc1.metric(
+                    f"≥ {p['threshold']} pts",
+                    p["record_above"],
+                    delta=f"{p['wr_above']:.0%} WR",
+                )
+                pc2.metric(
+                    f"< {p['threshold']} pts",
+                    p["record_below"],
+                    delta=f"{p['wr_below']:.0%} WR",
+                    delta_color="inverse" if p["wr_below"] < p["wr_above"] else "normal",
+                )
+    st.markdown("&nbsp;", unsafe_allow_html=True)
+
+# ── 3-Point Shooting ───────────────────────────────────────────────────────────
+
+shooting = report["shooting"]
+if shooting:
+    st.markdown("##### 3-Point Shooting Tendency")
+    with st.container(border=True):
+        if shooting["pct"] >= 33:
+            label = "## 🟢\n**Strong threat from three**"
+        elif shooting["pct"] >= 25:
+            label = "## 🟡\n**Moderate 3PT threat**"
         else:
-            # Pull out the columns the coach cares most about, in a sensible order
-            priority = ["GP", "Pts", "PPG", "FG_made", "FG_att", "FG%",
-                        "3FG_made", "3FG_att", "3FG%", "FT_made", "FT_att", "FT%",
-                        "RBS", "RPG", "AST", "APG", "STL", "SPG", "TN", "BK"]
-            cols = [c for c in priority if c in player_df.columns]
-            remaining = [c for c in player_df.columns if c not in cols and c != "GP"]
-            st.dataframe(
-                player_df[cols + remaining],
-                use_container_width=True,
-                height=500,
-            )
-
-    else:
-        st.info("Click the button above to load and aggregate the full season.")
-
-
-# ── TAB 4: GAME EXPLORER ──────────────────────────────────────────────────────
-
-with tab_game:
-    schedule["sel_label"] = (
-        schedule["date"] + "  "
-        + schedule["result"].fillna("TBD") + "  vs  "
-        + schedule["opponent"]
-    )
-    selected_label = st.selectbox("Pick a game", schedule["sel_label"])
-    row = schedule[schedule["sel_label"] == selected_label].iloc[0]
-
-    with st.spinner("Loading box score..."):
-        bs = load_boxscore(int(row["event_id"]))
-
-    if row["result"] == "W":
-        result_badge = f"✅ W  {int(row['hld_score'])}-{int(row['opp_score'])}"
-    elif row["result"] == "L":
-        result_badge = f"❌ L  {int(row['hld_score'])}-{int(row['opp_score'])}"
-    else:
-        result_badge = "—"
-
-    st.subheader(f"{row['date']}  ·  {row['opponent']}  ·  {result_badge}")
-    st.caption(f"Season record after game: {row['record']}")
-    st.divider()
-
-    col_off, col_def = st.columns(2)
-    with col_off:
-        st.markdown("**Offensive Stats**")
-        if not bs["offense"].empty:
-            st.dataframe(bs["offense"], use_container_width=True, hide_index=True)
-    with col_def:
-        st.markdown("**Defensive Stats**  *(RBS · AST · STL · TN · BK · FLS)*")
-        if not bs["defense"].empty:
-            st.dataframe(bs["defense"], use_container_width=True, hide_index=True)
+            label = "## 🔴\n**Weak from three — sag off**"
+        st.markdown(label)
+        st.markdown(f"**{shooting['pct']}%** from three this season")
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        tc1, tc2, tc3 = st.columns(3)
+        tc1.metric("3PT%", f"{shooting['pct']}%")
+        tc2.metric("Attempts / Game", shooting["att_per_game"])
+        tc3.metric("Season Total", f"{shooting['made']}/{shooting['att']}")
