@@ -18,7 +18,6 @@ def _find_best_split(
     """
     Scan 30th–70th percentile thresholds to find the one that maximises the
     win-rate differential between the two halves.
-
     Returns (threshold, wr_above, wr_below, diff).
     """
     best_diff = 0.0
@@ -39,6 +38,161 @@ def _find_best_split(
 
     return best_thresh, best_wr_above, best_wr_below, best_diff
 
+
+# ── Scouting blurb generators ──────────────────────────────────────────────────
+
+def _insight_blurb(category: str, threshold: int, wr_above: float, wr_below: float) -> str:
+    """Generate a basketball-expert scouting blurb for a statistical insight."""
+    wr_high = max(wr_above, wr_below)
+    decisive = wr_high > 0.75
+
+    if category == "Points Scored":
+        if threshold >= 50:
+            return (
+                "Explosive offense that thrives on open-court opportunities and scoring runs. "
+                "Apply ball pressure early, minimize live-ball turnovers that fuel their transition game, "
+                "and force deliberate half-court sets where your defense can dictate."
+            )
+        elif threshold >= 42:
+            return (
+                "Consistent offensive output anchors their wins. "
+                "Disrupting their shooting rhythm — particularly on early-clock possessions — "
+                "takes them out of their comfort zone and invites impatience."
+            )
+        else:
+            return (
+                "They build wins through efficiency and discipline, not volume. "
+                "Match their pace, contest every touch in the paint, "
+                "and limit second-chance opportunities to keep them uncomfortable."
+            )
+
+    elif category == "Points Allowed":
+        if wr_below > wr_above:
+            if decisive:
+                return (
+                    "Elite defensive unit that locks down opponents and makes every bucket feel earned. "
+                    "Patient offense, ball movement through weak-side rotations, "
+                    "and attacking in transition after live-ball turnovers are your best openings."
+                )
+            else:
+                return (
+                    "Above-average defensive discipline when locked in. "
+                    "Ball movement, skip passes, and attacking late in the shot clock "
+                    "can crack their coverage and force defensive breakdowns."
+                )
+        else:
+            return (
+                "Vulnerable in open-ended, high-scoring games. "
+                "Attack early, build a lead, and maintain offensive aggression "
+                "to prevent them from settling into any kind of defensive rhythm."
+            )
+
+    elif category == "Ball Security":
+        if wr_below > wr_above:
+            return (
+                "Ball security is the heartbeat of their offense. "
+                "Force weak-hand dribbles, trap ball screens, and apply full-court pressure "
+                "to manufacture the chaos that completely derails their game plan."
+            )
+        else:
+            return (
+                "Surprisingly resilient despite sloppy possessions — "
+                "their scoring volume absorbs turnover damage. "
+                "Prioritize your own ball security and exploit the live-ball transition "
+                "opportunities they consistently create."
+            )
+
+    return ""
+
+
+def _player_blurb(
+    season_avg: float,
+    wr_above: float,
+    wr_below: float,
+    fg_pct: float | None = None,
+) -> str:
+    """Generate a basketball-expert scouting blurb for a player impact insight."""
+    sig = abs(wr_above - wr_below)
+
+    if season_avg >= 20:
+        base = (
+            "Primary offensive engine — the entire game plan runs through her. "
+            "She demands a disciplined shadow defender, early ball denial on every entry, "
+            "and constant help-side communication on all penetration."
+        )
+    elif season_avg >= 15:
+        base = (
+            "High-volume second option who can take over when the primary scorer is contained. "
+            "Limit catch opportunities on the wing, deny easy post entries, "
+            "and hedge conservatively on ball screens."
+        )
+    elif season_avg >= 10:
+        base = (
+            "Efficient role scorer who elevates in transition and off back-screens. "
+            "Maintain disciplined off-ball awareness — she converts quiet opportunities "
+            "into momentum-shifting buckets."
+        )
+    else:
+        base = (
+            "Spot-up threat whose catch-and-shoot game can tilt a quarter. "
+            "Stay disciplined and don't overplay her — it opens driving lanes for the primary options."
+        )
+
+    if sig > 0.40:
+        impact = (
+            " Her scoring is the single strongest predictor of this team's outcomes — "
+            "the win probability swings dramatically based on her production. Shutting her down is the #1 gameplan priority."
+        )
+    elif sig > 0.25:
+        impact = (
+            " Her production has a clear ripple effect on team success — "
+            "early foul trouble or a cold start changes the entire complexion of the game."
+        )
+    else:
+        impact = (
+            " Consistent contributor, but the team has enough depth to compensate when she's quiet."
+        )
+
+    if fg_pct is not None:
+        if fg_pct >= 50:
+            eff = " High-efficiency finisher — physical defense inside and forcing baseline are critical."
+        elif fg_pct >= 40:
+            eff = " Solid efficiency across the floor — make her work hard outside her comfort zone."
+        else:
+            eff = " Volume scorer with inconsistent efficiency — force contested looks and she'll struggle."
+        return base + impact + eff
+
+    return base + impact
+
+
+def _shooting_blurb(pct: float, att_per_game: float) -> str:
+    """Generate a scouting blurb for 3-point shooting tendency."""
+    if pct >= 40:
+        return (
+            f"Elite perimeter attack at {pct}% — they will beat you from three if you give any daylight. "
+            "Stay attached on every catch, communicate through all ball screens, "
+            "and prioritize a hand in every shooter's face regardless of position."
+        )
+    elif pct >= 33:
+        return (
+            f"Legitimate 3-point threat at {pct}%. Play one step off to contest "
+            "while maintaining lane presence. "
+            "Off-ball cutters become dangerous when defenders shade too far to the arc."
+        )
+    elif pct >= 25:
+        return (
+            f"Below-average efficiency from three at {pct}%. Play them honest but shade help-side — "
+            "prioritize lane clogging and rebound positioning over tight perimeter coverage."
+        )
+    else:
+        return (
+            f"Weak from the perimeter at {pct}% — sag off and load the paint. "
+            f"Force them to beat your defense off the bounce and challenge every interior attempt. "
+            f"At {att_per_game} attempts per game they're still looking for it, but it's not a threat."
+        )
+
+
+# ── Statistical insight generators ────────────────────────────────────────────
 
 def _score_split_insight(
     schedule: pd.DataFrame,
@@ -74,6 +228,7 @@ def _score_split_insight(
         "icon": icon,
         "category": category,
         "headline": headline,
+        "blurb": _insight_blurb(category, t, wr_above, wr_below),
         "threshold": t,
         "good_record": good_record,
         "bad_record": bad_record,
@@ -82,10 +237,9 @@ def _score_split_insight(
         "wr_above": wr_above,
         "wr_below": wr_below,
         "significance": diff,
+        "is_synthetic": False,
     }
 
-
-# ── Insight generators ─────────────────────────────────────────────────────────
 
 def _turnover_insight(schedule: pd.DataFrame, def_df: pd.DataFrame) -> dict | None:
     """Win/loss split based on team turnovers per game (requires TN in def_df)."""
@@ -126,6 +280,7 @@ def _turnover_insight(schedule: pd.DataFrame, def_df: pd.DataFrame) -> dict | No
         "icon": "🔄",
         "category": "Ball Security",
         "headline": headline,
+        "blurb": _insight_blurb("Ball Security", t, wr_above, wr_below),
         "threshold": t,
         "good_record": good_record,
         "bad_record": bad_record,
@@ -134,6 +289,7 @@ def _turnover_insight(schedule: pd.DataFrame, def_df: pd.DataFrame) -> dict | No
         "wr_above": wr_above,
         "wr_below": wr_below,
         "significance": diff,
+        "is_synthetic": False,
     }
 
 
@@ -143,9 +299,10 @@ def _player_impact_for(
     player_name: str,
     name_col: str,
 ) -> dict | None:
-    """Win/loss split for one specific player's scoring."""
+    """Win/loss split for one specific player's scoring, with scouting blurb."""
+    player_rows = off_df[off_df[name_col] == player_name]
     player_games = (
-        off_df[off_df[name_col] == player_name][["date", "Pts"]]
+        player_rows[["date", "Pts"]]
         .rename(columns={"Pts": "player_pts"})
     )
     played = (
@@ -163,16 +320,27 @@ def _player_impact_for(
     t = int(round(thresh))
     above = played[played["player_pts"] >= t]
     below = played[played["player_pts"] < t]
+    season_avg = round(float(played["player_pts"].mean()), 1)
+
+    # Pull FG% if available
+    fg_pct = None
+    if "FG_made" in off_df.columns and "FG_att" in off_df.columns:
+        total_made = float(player_rows["FG_made"].sum())
+        total_att = float(player_rows["FG_att"].sum())
+        if total_att > 0:
+            fg_pct = round(total_made / total_att * 100, 1)
 
     return {
         "name": player_name,
-        "season_avg": round(float(played["player_pts"].mean()), 1),
+        "season_avg": season_avg,
         "threshold": t,
         "record_above": _record(above["result"]),
         "record_below": _record(below["result"]),
         "wr_above": wr_above,
         "wr_below": wr_below,
         "significance": diff,
+        "fg_pct": fg_pct,
+        "blurb": _player_blurb(season_avg, wr_above, wr_below, fg_pct),
     }
 
 
@@ -199,8 +367,10 @@ def get_player_impacts(
     return impacts
 
 
+# ── Season-level analysis ──────────────────────────────────────────────────────
+
 def _shooting_summary(off_df: pd.DataFrame) -> dict | None:
-    """Season 3-point shooting summary, if data is available."""
+    """Season 3-point shooting summary with scouting blurb, if data is available."""
     if off_df is None or off_df.empty or "date" not in off_df.columns:
         return None
 
@@ -220,12 +390,16 @@ def _shooting_summary(off_df: pd.DataFrame) -> dict | None:
     if total_att == 0 or n_games == 0:
         return None
 
+    pct = round(total_made / total_att * 100, 1)
+    att_per_game = round(total_att / n_games, 1)
+
     return {
-        "pct": round(total_made / total_att * 100, 1),
+        "pct": pct,
         "made": total_made,
         "att": total_att,
-        "att_per_game": round(total_att / n_games, 1),
+        "att_per_game": att_per_game,
         "made_per_game": round(total_made / n_games, 1),
+        "blurb": _shooting_blurb(pct, att_per_game),
     }
 
 
@@ -264,6 +438,67 @@ def _trend_summary(schedule: pd.DataFrame) -> dict:
     }
 
 
+# ── Synthetic insights for missing data ───────────────────────────────────────
+
+def generate_missing_data_insights(
+    opponent_name: str,
+    has_turnovers: bool,
+    has_fg_pct: bool,
+) -> list[dict]:
+    """
+    Generate expert-commentary insight cards for stats that Highland tracks
+    but the opponent does not. These turn data gaps into actionable coaching notes.
+    """
+    insights = []
+
+    if not has_turnovers:
+        insights.append({
+            "icon": "👻",
+            "category": "Invisible Possession Battle",
+            "headline": f"{opponent_name} doesn't track individual turnovers",
+            "blurb": (
+                "The possession battle — a key predictor of outcome in girls basketball — "
+                "is an unquantified variable here. The simulation runs on scoring distributions only. "
+                "Regardless of what the data shows, disciplined ball security and "
+                "preventing live-ball turnovers will be critical to controlling pace "
+                "and limiting their second-chance opportunities."
+            ),
+            "good_record": None,
+            "bad_record": None,
+            "good_label": None,
+            "bad_label": None,
+            "wr_above": None,
+            "wr_below": None,
+            "significance": 0,
+            "is_synthetic": True,
+        })
+
+    if not has_fg_pct:
+        insights.append({
+            "icon": "🎯",
+            "category": "Shooting Profile Unknown",
+            "headline": f"FG%, 3FG%, and FT% not tracked for {opponent_name}",
+            "blurb": (
+                "Shooting efficiency is a blind spot in this scouting report — "
+                "the simulation relies on raw scoring totals only. "
+                "Contest all shots, prioritize defensive rebounding position, "
+                "and don't let their scoring totals mislead you: "
+                "some of it may be high-volume, low-efficiency production "
+                "that won't hold up under tight pressure defense."
+            ),
+            "good_record": None,
+            "bad_record": None,
+            "good_label": None,
+            "bad_label": None,
+            "wr_above": None,
+            "wr_below": None,
+            "significance": 0,
+            "is_synthetic": True,
+        })
+
+    return insights
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def generate_full_scouting_report(
@@ -271,11 +506,14 @@ def generate_full_scouting_report(
     off_df: pd.DataFrame | None,
     def_df: pd.DataFrame | None,
     opponent_name: str,
+    has_turnovers: bool = True,
+    has_fg_pct: bool = True,
 ) -> dict:
     """
     Assemble the complete scouting report for an opponent.
 
     Returns a dict with keys: opponent_name, trend, insights, player_impacts, shooting.
+    Each insight and player_impact includes a 'blurb' field with expert commentary.
     """
     insights: list[dict] = []
 
@@ -291,7 +529,9 @@ def generate_full_scouting_report(
     if s:
         insights.append(s)
 
+    # Sort data-driven insights by significance, then append synthetic commentary
     insights.sort(key=lambda x: x["significance"], reverse=True)
+    insights.extend(generate_missing_data_insights(opponent_name, has_turnovers, has_fg_pct))
 
     return {
         "opponent_name": opponent_name,

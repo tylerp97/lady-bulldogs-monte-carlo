@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pandas as pd
 
@@ -11,6 +13,34 @@ _STAT_LABELS = {
     "shooting": "shooting percentages (FG%, 3FG%, FT%)",
     "turnovers": "individual turnovers (TN column)",
 }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SOS WEIGHT — TUNE THIS ONE VALUE
+#
+# Calibrated against live data:
+#   Highland raw avg = 45.5 pts, Triad raw avg = 51.0 pts (gap = -5.5)
+#   At Highland SOS=4 vs Triad SOS=2, target margin ≈ +15
+#   Net shift needed = +20.5 over two teams → K ≈ 10
+#
+# How it works: each team's scoring MEAN shifts by K * (their_sos - 3).
+#   Hard schedule (SOS > 3) → raw scores are suppressed → boost mean
+#   Easy schedule (SOS < 3) → raw scores are inflated → deflate mean
+#   Equal SOS → no change regardless of level
+#
+# Replace this value when final coefficients are provided.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_SOS_PPG_K = 10.0  # points per SOS level above/below average (3) — TUNE THIS
+
+
+def _sos_mean_adjustment(sos: int) -> float:
+    """
+    Return the scoring-mean adjustment (in points) for a given SOS.
+    SOS=3 (average) → 0.  SOS=4 → +10.  SOS=2 → -10.
+    Replace the formula body when exact coefficients are provided.
+    """
+    return _SOS_PPG_K * (sos - 3)
 
 
 def detect_opponent_stat_categories(
@@ -56,19 +86,22 @@ def run_monte_carlo(
     hld_scores: list[float],
     opp_scores: list[float],
     n_sims: int = N_SIMS,
+    hld_mean_adj: float = 0.0,
+    opp_mean_adj: float = 0.0,
 ) -> dict:
     """
     Simulate n_sims games by sampling from each team's historical scoring distribution.
     Both distributions are modelled as Normal(mean, std) and clipped to realistic range.
+    hld_mean_adj / opp_mean_adj shift the means before sampling (used for SOS weighting).
     """
     rng = np.random.default_rng(RNG_SEED)
 
     hld = np.array([s for s in hld_scores if s is not None and not np.isnan(float(s))], dtype=float)
     opp = np.array([s for s in opp_scores if s is not None and not np.isnan(float(s))], dtype=float)
 
-    hld_mean = float(np.mean(hld))
+    hld_mean = float(np.mean(hld)) + hld_mean_adj
     hld_std = float(max(np.std(hld), 2.0))
-    opp_mean = float(np.mean(opp))
+    opp_mean = float(np.mean(opp)) + opp_mean_adj
     opp_std = float(max(np.std(opp), 2.0))
 
     hld_sim = np.clip(rng.normal(hld_mean, hld_std, n_sims), 10, 110)
@@ -95,12 +128,14 @@ def simulate_matchup(
     opp_off_df: pd.DataFrame | None,
     opp_def_df: pd.DataFrame | None,
     opponent_name: str,
+    hld_sos: int = 3,
+    opp_sos: int = 3,
 ) -> dict:
     """
     Full simulation pipeline for a Highland vs. opponent matchup.
 
     Returns a dict with keys:
-      simulation  — run_monte_carlo output
+      simulation  — run_monte_carlo output with SOS-adjusted win_prob
       disclaimer  — markdown string or None
       opp_stats   — sorted list of stat categories detected for the opponent
     """
@@ -110,10 +145,23 @@ def simulate_matchup(
     hld_scores = hld_schedule["hld_score"].dropna().tolist()
     opp_scores = opp_schedule["hld_score"].dropna().tolist()
 
-    sim = run_monte_carlo(hld_scores, opp_scores)
+    # Raw simulation — no SOS adjustment (used for before/after display)
+    raw_sim = run_monte_carlo(hld_scores, opp_scores)
+
+    # SOS-adjusted simulation — shifts each team's scoring mean by K * (sos - 3)
+    hld_adj = _sos_mean_adjustment(hld_sos)
+    opp_adj = _sos_mean_adjustment(opp_sos)
+    adj_sim = run_monte_carlo(hld_scores, opp_scores, hld_mean_adj=hld_adj, opp_mean_adj=opp_adj)
 
     return {
-        "simulation": sim,
+        "simulation": {
+            **adj_sim,
+            "raw_win_prob": raw_sim["win_prob"],
+            "raw_hld_projected": raw_sim["hld_projected"],
+            "raw_opp_projected": raw_sim["opp_projected"],
+            "hld_sos": hld_sos,
+            "opp_sos": opp_sos,
+        },
         "disclaimer": disclaimer,
         "opp_stats": sorted(opp_cats),
     }

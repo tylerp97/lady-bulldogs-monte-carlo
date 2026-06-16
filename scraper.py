@@ -12,11 +12,34 @@ SEASON_ID = 961
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; LadyBulldogsCoachApp/1.0)"}
 _REQUEST_DELAY = 0.4  # seconds between requests — be a good citizen
 
-KNOWN_OPPONENTS = {
-    "Triad": 266,
-    "Civic Memorial": 17,
-    "Breese Central": 24,
-    "Alton": 3,
+# Explicit per-team data completeness flags.
+# Add new opponents here — set flags to False for any stat the team doesn't track.
+OPPONENT_METADATA: dict[str, dict] = {
+    "Triad": {
+        "team_id": 266,
+        "has_turnovers": False,  # does not track individual TN column
+        "has_fg_pct": True,      # tracks FG%, 3FG%, FT%
+    },
+    "Civic Memorial": {
+        "team_id": 17,
+        "has_turnovers": False,  # does not track turnovers
+        "has_fg_pct": False,     # does not track any shooting percentages
+    },
+    "Breese Central": {
+        "team_id": 24,
+        "has_turnovers": True,
+        "has_fg_pct": True,
+    },
+    "Alton": {
+        "team_id": 3,
+        "has_turnovers": True,
+        "has_fg_pct": True,
+    },
+}
+
+# Derived for backwards compatibility and data loading
+KNOWN_OPPONENTS: dict[str, int] = {
+    name: meta["team_id"] for name, meta in OPPONENT_METADATA.items()
 }
 
 
