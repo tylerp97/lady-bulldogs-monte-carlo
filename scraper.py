@@ -35,6 +35,36 @@ OPPONENT_METADATA: dict[str, dict] = {
         "has_turnovers": True,
         "has_fg_pct": True,
     },
+    "Mascoutah": {
+        "team_id": 150,
+        "has_turnovers": True,
+        "has_fg_pct": True,
+    },
+    "Waterloo": {
+        "team_id": 287,
+        "has_turnovers": True,
+        "has_fg_pct": True,
+    },
+    "Edwardsville": {
+        "team_id": 69,
+        "has_turnovers": True,
+        "has_fg_pct": True,
+    },
+    "Althoff": {
+        "team_id": 2,
+        "has_turnovers": True,
+        "has_fg_pct": True,
+    },
+    "Okawville": {
+        "team_id": 189,
+        "has_turnovers": True,
+        "has_fg_pct": True,
+    },
+    "O'Fallon": {
+        "team_id": 184,
+        "has_turnovers": True,
+        "has_fg_pct": True,
+    },
 }
 
 # Derived for backwards compatibility and data loading
