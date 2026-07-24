@@ -133,7 +133,7 @@ with col_donut:
             values=[win_pct * 100, loss_pct * 100],
             labels=["Highland", opponent_name],
             hole=0.65,
-            marker=dict(colors=["#2ecc71", "#e74c3c"]),
+            marker=dict(colors=["#f1c40f", "#9b59b6"]),
             textinfo="none",
             hovertemplate="%{label}: %{value:.1f}%<extra></extra>",
         )
@@ -141,7 +141,7 @@ with col_donut:
     fig.add_annotation(
         text=f"<b>{win_pct:.0%}</b>",
         x=0.5, y=0.58,
-        font=dict(size=38, color="#2ecc71" if win_pct >= 0.5 else "#e74c3c"),
+        font=dict(size=38, color="#f1c40f" if win_pct >= 0.5 else "#9b59b6"),
         showarrow=False,
     )
     fig.add_annotation(
