@@ -540,3 +540,164 @@ def generate_full_scouting_report(
         "player_impacts": get_player_impacts(schedule, off_df, n=3),
         "shooting": _shooting_summary(off_df),
     }
+
+
+# ── Presentation copy for the redesigned dashboard ─────────────────────────────
+#
+# The 2026 design reframes each insight as an instruction ("Hold them under 51")
+# rather than a statistic ("51+ pts -> 100% win rate"). That rewrite is content
+# generation, not layout, so it lives here beside the other blurb generators and
+# app.py stays purely presentational.
+
+
+def _directive_for(category: str, t: int, wr_above: float, wr_below: float,
+                   opponent_name: str) -> tuple[str, str, str]:
+    """Return (kicker, directive, context) for one insight.
+
+    `kicker` is the small uppercase label, `directive` the imperative headline a
+    coach acts on, `context` the single line of evidence underneath it.
+    """
+    above_wins = wr_above >= wr_below
+    hi = max(wr_above, wr_below)
+
+    if category == "Points Scored":
+        if above_wins:
+            return ("Offense", f"Hold them under {t}",
+                    f"{opponent_name} scores {t}+ → they win {hi:.0%} of the time")
+        return ("Offense", f"Force the game above {t}",
+                f"{opponent_name} under {t} → they win {hi:.0%} of the time")
+
+    if category == "Points Allowed":
+        if not above_wins:
+            return ("Defense", f"Score {t} or more",
+                    f"{opponent_name} allows under {t} → they win {hi:.0%} of the time")
+        return ("Defense", f"Keep it under {t}",
+                f"{opponent_name} allows {t}+ → they win {hi:.0%} of the time")
+
+    if category == "Ball Security":
+        if not above_wins:
+            return ("Possession", f"Force {t}+ turnovers",
+                    f"{opponent_name} under {t} turnovers → they win {hi:.0%} of the time")
+        return ("Possession", "Protect your own possessions",
+                f"{opponent_name} at {t}+ turnovers → they still win {hi:.0%} of the time")
+
+    if category == "Invisible Possession Battle":
+        return ("Unmeasured", "Win the possession battle",
+                "Not in the data — still decides the game")
+
+    if category == "Shooting Profile Unknown":
+        return ("Unmeasured", "Contest every shot",
+                "Not in the data — shooting efficiency unknown")
+
+    return ("Key", category, "")
+
+
+def insight_presentation(insight: dict, opponent_name: str) -> dict:
+    """Attach kicker / directive / context to one insight dict."""
+    kicker, directive, context = _directive_for(
+        insight["category"],
+        int(insight.get("threshold") or 0),
+        float(insight.get("wr_above") or 0.0),
+        float(insight.get("wr_below") or 0.0),
+        opponent_name,
+    )
+    return {**insight, "kicker": kicker, "directive": directive, "context": context}
+
+
+def player_role_tag(impact: dict, is_top: bool = False) -> str:
+    """Short uppercase tag describing how much this player swings the game.
+
+    `is_top` marks the single biggest swing on the roster. The tag is ranked
+    rather than thresholded because "Priority 1" printed on three cards tells a
+    coach nothing — the point of the label is to say who to plan around first.
+    """
+    if is_top:
+        return "Priority 1"
+
+    sig = float(impact.get("significance") or 0.0)
+    if sig > 0.25:
+        return "Swing player"
+
+    avg = float(impact.get("season_avg") or 0.0)
+    if avg >= 15:
+        return "Volume scorer"
+    if avg >= 10:
+        return "Role scorer"
+    return "Spot-up threat"
+
+
+def assign_role_tags(impacts: list[dict]) -> list[str]:
+    """Role tags for a list of player impacts, ranked by swing significance."""
+    if not impacts:
+        return []
+    top = max(range(len(impacts)),
+              key=lambda i: float(impacts[i].get("significance") or 0.0))
+    return [player_role_tag(p, is_top=(i == top)) for i, p in enumerate(impacts)]
+
+
+def head_to_head_read(h2h: pd.DataFrame, win_prob: float, opponent_name: str) -> dict:
+    """Games played against this opponent, plus a read on model-vs-tape.
+
+    When the season-long distributions and the actual head-to-head results point
+    different directions, that disagreement is the single most useful thing on
+    the page — a coach should know the model is arguing with the tape rather than
+    confirming it.
+    """
+    games: list[dict] = []
+    if h2h is not None and not h2h.empty:
+        for _, g in h2h.iterrows():
+            if g.get("result") in ("W", "L") and pd.notna(g.get("hld_score")):
+                hld, opp = int(g["hld_score"]), int(g["opp_score"])
+                games.append({
+                    "date": str(g.get("date", "")),
+                    "result": g["result"],
+                    "hld_score": hld,
+                    "opp_score": opp,
+                    "margin": hld - opp,
+                })
+
+    if not games:
+        return {
+            "games": [],
+            "verdict": (
+                f"**No head-to-head this season.** The projection rests entirely on "
+                f"season-long scoring distributions, with no direct evidence of how "
+                f"these two teams match up."
+            ),
+        }
+
+    wins = sum(1 for g in games if g["result"] == "W")
+    avg_margin = sum(g["margin"] for g in games) / len(games)
+    model_favors_highland = win_prob >= 0.5
+    tape_favors_highland = wins * 2 > len(games)
+    avg_allowed = sum(g["opp_score"] for g in games) / len(games)
+
+    if tape_favors_highland and not model_favors_highland:
+        verdict = (
+            f"**Model disagrees with the tape.** Season-long distributions favor "
+            f"{opponent_name}, but Highland has held them to {avg_allowed:.0f} points "
+            f"per meeting and won by an average of {avg_margin:.0f}. Trust the "
+            f"defensive plan."
+        )
+    elif model_favors_highland and not tape_favors_highland:
+        verdict = (
+            f"**Tape disagrees with the model.** The projection favors Highland, but "
+            f"{opponent_name} has actually won this matchup. Whatever they did is not "
+            f"showing up in the season-long averages — review the film before "
+            f"trusting the number."
+        )
+    elif tape_favors_highland:
+        verdict = (
+            f"**Model and tape agree.** Highland is {wins}–{len(games) - wins} "
+            f"against {opponent_name} at an average margin of {avg_margin:+.0f}, and the "
+            f"projection points the same way."
+        )
+    else:
+        verdict = (
+            f"**Model and tape agree.** {opponent_name} has taken "
+            f"{len(games) - wins} of {len(games)}, at an average margin of "
+            f"{avg_margin:+.0f} for Highland. The projection reflects a real gap, not "
+            f"a sampling artifact."
+        )
+
+    return {"games": games, "verdict": verdict}

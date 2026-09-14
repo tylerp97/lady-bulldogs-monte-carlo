@@ -122,6 +122,29 @@ Update that comment whenever you change the value.
   skip games that error rather than raising, so one bad page cannot break the dashboard.
   When debugging missing data, that `except Exception: continue` is the first place to look.
 
+## UI conventions (2026 design)
+
+The dashboard follows a modernist design handoff. The rules that keep it coherent:
+
+- **Every radius is 0.** One global CSS rule in `app.py` does most of the visual work.
+- **No emoji, no icon circles, no shadowed cards.** Structure comes from 2px dividers
+  and alignment. `scouting.py` still emits an `icon` field on each insight; the UI
+  deliberately ignores it.
+- **Two colors carry meaning.** Highland is always ink (`#201e1d`), the opponent is
+  always accent red (`#ec3013`). No green — that rules out `st.metric`, whose delta
+  arrows force green/red, so records render as markdown instead.
+- **No Plotly.** The win-probability split is a two-div flex bar. The dependency was
+  removed from `requirements.txt`; do not reintroduce it for a chart.
+- **Theme lives in `.streamlit/config.toml`** and is committed. `.gitignore` ignores
+  everything else under `.streamlit/` so local `secrets.toml` never ships.
+- **Interactive = native widget, visual = one HTML block.** Selectboxes, tabs and the
+  roster table are native Streamlit; the scoreline, ledger and card grids are HTML.
+  Reproducing the shared-rule grids via `st.container(border=True)` would depend on
+  Streamlit's internal `data-testid` DOM, which changes between releases.
+- **Copy generation belongs in `scouting.py`.** Imperative directives, role tags and
+  the head-to-head read are content, not layout. `app.py` only arranges and escapes —
+  every data-derived string goes through `_esc()` before entering an HTML block.
+
 ## agent_lab/ — exam practice, not part of the dashboard
 
 `agent_lab/` holds Claude Certified Architect Foundations practice work. It is

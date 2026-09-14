@@ -6,8 +6,10 @@ __pycache__/
 venv/
 env/
 
-# Streamlit cache
-.streamlit/
+# Streamlit — the theme is part of the app and must ship; local secrets
+# and cache under the same directory must not.
+.streamlit/*
+!.streamlit/config.toml
 
 # OS
 .DS_Store
