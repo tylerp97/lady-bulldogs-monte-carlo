@@ -19,8 +19,10 @@
       "Read(./.env)",
       "Read(./.streamlit/secrets.toml)",
       "Read(//c/Users/tpoll/.claude/.credentials.json)",
-      "Bash(git push:*)",
-      "Bash(git reset --hard:*)"
+      "Bash(git reset --hard:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push origin main:*)"
     ]
   },
   "hooks": {
