@@ -1,0 +1,6 @@
+# Dependencies for agent_lab/ only — the Claude Certified Architect practice work.
+# Deliberately separate from requirements.txt so the Streamlit dashboard's runtime
+# footprint does not grow. Install with:
+#   .venv/Scripts/python.exe -m pip install -r requirements-agent-lab.txt
+anthropic>=1.5.0
+pydantic>=2.11.0
